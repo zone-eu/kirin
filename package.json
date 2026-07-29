@@ -1,6 +1,6 @@
 {
     "name": "kirin",
-    "version": "1.0.0",
+    "version": "0.0.1",
     "description": "Clusterable/container-ready MX server built on smtp-server",
     "main": "server.js",
     "scripts": {

@@ -1,5 +1,9 @@
 # Kirin
 
+<p align="center">
+  <img src="assets/kirin.jpg" alt="Kirin logo" width="420">
+</p>
+
 Kirin is a small, clusterable SMTP receiver built on
 [`smtp-server`](https://www.npmjs.com/package/smtp-server). It exposes
 ZoneMTA-compatible receiver hooks through `@zone-eu/wild-plugins` and can run
@@ -177,3 +181,8 @@ Before a production deployment, configure durable delivery, use a real SMTP
 hostname and DNS records, supply TLS certificates, rotate all plugin secrets,
 restrict trusted proxy extensions, set resource limits, and add service
 supervision and monitoring.
+
+> Kirin Mail Server is part of the Zone Mail Suite (ZMS). Suite of programs
+> and modules for an efficient, fast and modern email server.
+
+Copyright (c) 2026 Zone Media OÜ.
