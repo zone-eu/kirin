@@ -294,4 +294,39 @@ describe('KirinTransaction', () => {
 
         assert.equal(transaction.bodyBuffer.toString(), 'Body\r\n\r\nMore body');
     });
+
+    it('adds headers at the trailing, leading, and specified positions', () => {
+        const transaction = new KirinTransaction({ results: new Map() });
+        transaction.setMessage(Buffer.from('From: sender@example.com\r\nTo: recipient@example.com\r\n\r\nBody'));
+        assert(transaction.header);
+
+        transaction.header.add('X-Trailing', 'trailing');
+        transaction.header.addLeadingHeader('X-Leading', 'leading');
+        transaction.header.addAt('X-Indexed', 'indexed', 2);
+
+        assert.equal(
+            transaction.getMessageBuffer().toString(),
+            [
+                'X-Leading: leading',
+                'From: sender@example.com',
+                'X-Indexed: indexed',
+                'To: recipient@example.com',
+                'X-Trailing: trailing',
+                '',
+                'Body'
+            ].join('\r\n')
+        );
+    });
+
+    it('makes transaction add_header trailing and add_leading_header leading', () => {
+        const transaction = new KirinTransaction({ results: new Map() });
+        transaction.add_header('X-Trailing', 'trailing');
+        transaction.add_leading_header('X-Leading', 'leading');
+        transaction.setMessage(Buffer.from('Subject: test\r\n\r\nBody'));
+
+        assert.equal(
+            transaction.getMessageBuffer().toString(),
+            ['X-Leading: leading', 'Subject: test', 'X-Trailing: trailing', '', 'Body'].join('\r\n')
+        );
+    });
 });
