@@ -1,0 +1,29 @@
+# Dependencies and test output
+node_modules/
+coverage/
+.nyc_output/
+
+# Runtime state and logs
+*.log
+*.pid
+*.rdb
+appendonlydir/
+npm-debug.log*
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config/*.local.toml
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Packages and editor/agent state
+kirin-*.tgz
+.DS_Store
+.idea/
+.vscode/
+.agents/
+.codex

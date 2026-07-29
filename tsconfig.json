@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "allowJs": true,
+        "checkJs": false,
+        "module": "Preserve",
+        "moduleResolution": "Bundler",
+        "noEmit": true,
+        "skipLibCheck": true,
+        "strict": true,
+        "target": "ES2022",
+        "types": ["node"]
+    },
+    "include": [
+        "lib/connection.js",
+        "lib/smtp-envelope.js",
+        "lib/smtp-hooks.js",
+        "lib/transaction.js",
+        "lib/kirin-server.js",
+        "types/**/*.d.ts"
+    ]
+}

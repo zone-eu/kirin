@@ -1,0 +1,42 @@
+'use strict';
+
+const { loadPlugins } = require('./lib/plugins');
+const { KirinServer } = require('./lib/kirin-server');
+
+module.exports = async ({ config, log }) => {
+    let server;
+    const plugins = await loadPlugins(config, log, session => {
+        if (!server) {
+            throw new Error('SMTP server is not initialized');
+        }
+        return server.getConnection(session);
+    });
+    server = new KirinServer({ config, log, plugins });
+
+    await server.start();
+
+    log.info('App', 'Kirin ready on %s:%s', config.smtp.host || '0.0.0.0', config.smtp.port);
+
+    let closing = false;
+    const shutdown = signal => {
+        if (closing) {
+            return;
+        }
+        closing = true;
+
+        log.notice('App', 'Worker [%s] received %s, closing server', process.pid, signal);
+        server
+            .close()
+            .catch(err => {
+                log.error('App', 'Failed to close server cleanly: %s', err.stack || err.message || err);
+            })
+            .finally(() => {
+                process.exit(0);
+            });
+    };
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+    return server;
+};
