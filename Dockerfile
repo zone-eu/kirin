@@ -8,7 +8,7 @@ ENV NODE_ENV=production \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node server.js worker.js ./
+COPY --chown=node:node server.js ./
 COPY --chown=node:node config ./config
 COPY --chown=node:node lib ./lib
 

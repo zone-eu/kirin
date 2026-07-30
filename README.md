@@ -4,7 +4,7 @@
   <img src="assets/kirin.jpg" alt="Kirin logo" width="420">
 </p>
 
-Kirin is a small, clusterable SMTP receiver built on
+Kirin is a small SMTP receiver built on
 [`smtp-server`](https://www.npmjs.com/package/smtp-server). It exposes
 ZoneMTA-compatible receiver hooks through `@zone-eu/wild-plugins` and can run
 directly with Node.js or in a container.
@@ -16,8 +16,7 @@ directly with Node.js or in a container.
 
 ## Features
 
-- Single-process development mode or multi-process execution with Node.js
-  `cluster`
+- Single-process runtime designed for container orchestration
 - ZoneMTA-compatible SMTP hook contracts
 - Configurable SMTP size, connection, authentication, proxy, and TLS settings
 - Graceful signal handling and plugin shutdown hooks
@@ -76,12 +75,11 @@ npm run show-config
 
 Important settings include:
 
-- `processes`: `1` for a single process or `"cpus"` for one worker per CPU
 - `smtp.host`, `smtp.port`, and `smtp.name`: listener and SMTP identity
 - `smtp.size`: advertised and enforced maximum message size in bytes
 - `smtp.dataHookTimeout`: maximum duration of the DATA plugin hook in
   milliseconds
-- `smtp.maxClients`: maximum simultaneous SMTP connections per worker
+- `smtp.maxClients`: maximum simultaneous SMTP connections
 - `smtp.authentication`: whether AUTH may be advertised
 - `smtp.authOptional`: whether unauthenticated mail commands are permitted
 - `smtp.disableSTARTTLS`: whether the STARTTLS command is disabled
@@ -137,18 +135,19 @@ plugin can obtain the matching connection through the plugin handler's
 
 SMTP DATA is fully buffered in memory before `smtp:data(envelope, session)`
 runs. The buffer is released immediately after the hook completes, fails, or
-times out. The `smtp-server` size option advertises and enforces `smtp.size`;
+times out. The `smtp-server` size option advertises and enforces `smtp.size`,
 oversized messages receive a `552` response after the input stream has been
 drained.
 
 Memory use therefore scales with message size and concurrent DATA sessions.
-Choose conservative `smtp.size`, `smtp.maxClients`, and `processes` values for
-the available memory before exposing the service to untrusted clients.
+Choose conservative `smtp.size` and `smtp.maxClients` values for the available
+memory before exposing the service to untrusted clients.
 
 Unhandled promise rejections and uncaught exceptions are logged without
-explicitly terminating the worker. Worker startup is attempted once and a
-failed startup is not retried. Run the service under a supervisor and monitor
-its readiness in production.
+explicitly terminating the process. Startup is attempted once and a failed
+startup is not retried. Kirin does not fork or supervise child processes, run
+one process per container and scale with Kubernetes replicas or another
+external supervisor.
 
 ## Container
 
@@ -159,7 +158,7 @@ docker build -t kirin .
 docker run --rm -p 2525:2525 kirin
 ```
 
-The image sets the in-container listener to `0.0.0.0`; publishing the port is
+The image sets the in-container listener to `0.0.0.0`, publishing the port is
 still an explicit `docker run` choice. To use an external configuration file:
 
 ```bash
