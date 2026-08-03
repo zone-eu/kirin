@@ -1,5 +1,5 @@
 {
-    "name": "kirin",
+    "name": "@zone-eu/kirin",
     "version": "0.0.1",
     "description": "Clusterable/container-ready MX server built on smtp-server",
     "main": "server.js",

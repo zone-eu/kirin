@@ -4,15 +4,12 @@
   <img src="assets/kirin.jpg" alt="Kirin logo" width="420">
 </p>
 
+Clusterable/container-ready MX server built on `smtp-server`.
+
 Kirin is a small SMTP receiver built on
 [`smtp-server`](https://www.npmjs.com/package/smtp-server). It exposes
 ZoneMTA-compatible receiver hooks through `@zone-eu/wild-plugins` and can run
 directly with Node.js or in a container.
-
-> [!WARNING]
-> This repository is a receiver foundation, not a complete mail service. No
-> delivery or storage plugin is enabled by default. A message accepted by the
-> default configuration is released after the DATA hook and is not persisted.
 
 ## Features
 
