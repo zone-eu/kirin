@@ -18,7 +18,8 @@ directly with Node.js or in a container.
 - Configurable SMTP size, connection, authentication, proxy, and TLS settings
 - Graceful signal handling and plugin shutdown hooks
 - Docker image support
-- Contract tests and JavaScript type checking
+- Strict TypeScript source and contract tests
+- Dual ESM and CommonJS package exports
 
 ## Requirements
 
@@ -161,16 +162,56 @@ still an explicit `docker run` choice. To use an external configuration file:
 ```bash
 docker run --rm -p 2525:2525 \
   -v /etc/kirin.toml:/run/kirin.toml:ro \
-  kirin node server.js --config=/run/kirin.toml
+  kirin npm start -- --config=/run/kirin.toml
 ```
+
+## TypeScript package
+
+Kirin's source is plain TypeScript under `src/`. A build produces ESM,
+CommonJS, and format-specific declaration outputs under `dist/`. Install the
+scoped package and use the async factory for normal embedding:
+
+```bash
+npm install @zone-eu/kirin
+```
+
+```ts
+import { createKirinServer } from '@zone-eu/kirin';
+
+const server = await createKirinServer({ config });
+await server.start();
+```
+
+```js
+const { createKirinServer } = require('@zone-eu/kirin');
+
+async function main() {
+    const server = await createKirinServer({ config });
+    await server.start();
+}
+
+main().catch(console.error);
+```
+
+`createKirinServer()` creates the default logger and loads configured plugins.
+Advanced callers can still construct `KirinServer` with an initialized logger
+and plugin handler. An installed package also provides a `kirin` executable,
+so another project's npm script can invoke it directly or with `npx kirin`.
+
+The package root intentionally does not set a global module type. Generated
+ESM and CommonJS directories define their own module boundaries, so existing
+CommonJS receiver plugins using `.js` files continue to load normally.
 
 ## Development commands
 
 ```bash
-npm test              # run the Mocha test suite
-npm run typecheck     # check JavaScript and declaration files with TypeScript
-npm run check         # run both type checking and tests
-npm run show-config   # print merged configuration and exit
+npm run build          # build ESM, CommonJS, and declaration output
+npm test               # build and run the typed Mocha suite
+npm run typecheck      # type-check source, tests, and build tooling
+npm run lint           # run type-aware ESLint rules
+npm run format:check   # verify Prettier formatting
+npm run check          # run all static checks, build, and tests
+npm run show-config    # print merged configuration and exit
 ```
 
 Before a production deployment, configure durable delivery, use a real SMTP

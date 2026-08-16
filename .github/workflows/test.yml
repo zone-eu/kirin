@@ -26,3 +26,30 @@ jobs:
 
             - name: Run checks
               run: npm run check
+
+    package:
+        needs: test
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v6
+
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24.x
+                  cache: npm
+
+            - run: npm ci
+            - name: Verify npm package contents
+              run: npm pack --dry-run
+
+    docker:
+        needs: test
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v6
+            - name: Build image
+              run: docker build -t kirin:test .
+            - name: Smoke-test compiled entrypoint
+              run: docker run --rm kirin:test npm run show-config

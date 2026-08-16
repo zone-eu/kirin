@@ -2,13 +2,41 @@
     "name": "@zone-eu/kirin",
     "version": "0.0.1",
     "description": "Clusterable/container-ready MX server built on smtp-server",
-    "main": "server.js",
+    "main": "dist/cjs/index.js",
+    "module": "dist/esm/index.js",
+    "types": "dist/esm/index.d.ts",
+    "bin": {
+        "kirin": "dist/esm/server.js"
+    },
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/esm/index.d.ts",
+                "default": "./dist/esm/index.js"
+            },
+            "require": {
+                "types": "./dist/cjs/index.d.ts",
+                "default": "./dist/cjs/index.js"
+            },
+            "default": "./dist/esm/index.js"
+        }
+    },
+    "files": [
+        "assets",
+        "config",
+        "dist"
+    ],
     "scripts": {
-        "start": "node server.js",
-        "show-config": "NODE_CONFIG_ONLY=true node server.js",
-        "test": "mocha \"test/**/*.js\"",
+        "build": "rimraf dist && node --import=tsx scripts/build.ts && tsc -p tsconfig.build.json --outDir dist/esm && tsc -p tsconfig.build.json --outDir dist/cjs",
+        "start": "node --enable-source-maps dist/esm/server.js",
+        "show-config": "NODE_CONFIG_ONLY=true node --enable-source-maps dist/esm/server.js",
+        "test": "npm run build && mocha --import=tsx \"test/**/*.test.ts\"",
         "typecheck": "tsc -p tsconfig.json",
-        "check": "npm run typecheck && npm test",
+        "lint": "eslint \"{src,test,scripts}/**/*.ts\"",
+        "format": "prettier --write \"{src,test,scripts}/**/*.ts\" \"types/**/*.d.ts\" \"*.json\" \"*.md\"",
+        "format:check": "prettier --check \"{src,test,scripts}/**/*.ts\" \"types/**/*.d.ts\" \"*.json\" \"*.md\"",
+        "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+        "prepack": "npm run build",
         "update": "rm -rf node_modules package-lock.json && ncu -u && npm install"
     },
     "keywords": [
@@ -23,6 +51,7 @@
     "license": "EUPL-1.2",
     "dependencies": {
         "@zone-eu/mailsplit": "5.4.14",
+        "@zone-eu/types": "^0.1.6",
         "@zone-eu/wild-config": "1.7.5",
         "@zone-eu/wild-plugins": "1.0.9",
         "ipaddr.js": "2.4.0",
@@ -36,19 +65,18 @@
         "node": ">=20"
     },
     "devDependencies": {
+        "@eslint/js": "^10.0.0",
+        "@types/mocha": "^10.0.10",
         "@types/node": "25.9.1",
-        "@zone-eu/types": "^0.1.6",
-        "chai": "4.4.1",
+        "@types/npmlog": "^7.0.0",
+        "esbuild": "^0.25.0",
         "eslint": "10.7.0",
-        "eslint-config-nodemailer": "1.2.0",
         "eslint-config-prettier": "10.1.8",
-        "grunt": "1.6.2",
-        "grunt-cli": "1.5.0",
-        "grunt-eslint": "26.0.0",
-        "grunt-mocha-test": "0.13.3",
         "mocha": "10.7.3",
-        "pem": "1.14.8",
         "prettier": "3.9.5",
-        "typescript": "^7.0.2"
+        "rimraf": "^6.1.2",
+        "tsx": "^4.20.6",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.59.1"
     }
 }

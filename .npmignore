@@ -1,0 +1,11 @@
+.github/
+src/
+test/
+types/
+.dockerignore
+.gitignore
+Dockerfile
+eslint.config.js
+release-please-config.json
+tsconfig.json
+tsconfig.build.json

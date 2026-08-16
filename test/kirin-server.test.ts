@@ -1,31 +1,43 @@
-'use strict';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { KirinServer, type SmtpServerFactory } from '../src/lib/kirin-server.js';
+import { normalizeAddress } from '../src/lib/smtp-envelope.js';
+import { KirinTransaction } from '../src/lib/transaction.js';
+import type {
+    Envelope,
+    KirinConfig,
+    LoggerLike,
+    PluginHandlerLike,
+    SmtpDataStream,
+    SmtpError,
+    SmtpServerInstance,
+    SmtpServerOptions,
+    SmtpSession
+} from '../src/types.js';
 
-const assert = require('assert');
-const { PassThrough } = require('stream');
-const { KirinServer } = require('../lib/kirin-server');
-const { normalizeAddress } = require('../lib/smtp-envelope');
-const { KirinTransaction } = require('../lib/transaction');
+type HookAction = (...args: unknown[]) => unknown;
 
-class FakePlugins {
-    constructor() {
-        this.hooks = new Map();
-        this.actions = new Map();
-        this.calls = [];
-    }
+class FakePlugins implements PluginHandlerLike {
+    readonly hooks = new Map<string, unknown[]>();
+    readonly actions = new Map<string, HookAction>();
+    readonly calls: Array<{ name: string; args: unknown[] }> = [];
 
-    on(name, action) {
+    on<Args extends unknown[]>(name: string, action: (...args: Args) => unknown): void {
         this.hooks.set(name, [{ name }]);
-        this.actions.set(name, action);
+        this.actions.set(name, action as HookAction);
     }
 
-    runHooks(name, args) {
+    runHooks(name: string, args: unknown[]): Promise<void> {
         this.calls.push({ name, args });
         const action = this.actions.get(name);
-        return Promise.resolve().then(() => action?.(...args));
+        return Promise.resolve()
+            .then(() => action?.(...args))
+            .then(() => undefined);
     }
 }
 
-const createSession = overrides => ({
+const createSession = (overrides: Partial<SmtpSession> = {}): SmtpSession => ({
     id: 'session-id',
     secure: false,
     remoteAddress: '192.0.2.10',
@@ -45,8 +57,45 @@ const createSession = overrides => ({
     ...overrides
 });
 
-const createRuntime = ({ smtp, plugins } = {}) => {
-    plugins = plugins || new FakePlugins();
+const silentLogger: LoggerLike = {
+    info() {},
+    error() {},
+    verbose() {},
+    notice() {}
+};
+
+class FakeSmtpServer extends EventEmitter implements SmtpServerInstance {
+    listening = false;
+
+    constructor(private readonly listenError?: Error) {
+        super();
+    }
+
+    listen(_port: number, _host: string | undefined, callback: () => void): this {
+        queueMicrotask(() => {
+            if (this.listenError) {
+                this.emit('error', this.listenError);
+                return;
+            }
+            this.listening = true;
+            callback();
+        });
+        return this;
+    }
+
+    close(callback: () => void): void {
+        this.listening = false;
+        queueMicrotask(callback);
+    }
+}
+
+const createRuntime = ({
+    smtp,
+    plugins = new FakePlugins()
+}: {
+    smtp?: Partial<KirinConfig['smtp']>;
+    plugins?: FakePlugins;
+} = {}): { runtime: KirinServer; plugins: FakePlugins; options: SmtpServerOptions } => {
     const runtime = new KirinServer({
         config: {
             ident: 'kirin-test',
@@ -60,29 +109,61 @@ const createRuntime = ({ smtp, plugins } = {}) => {
                 ...smtp
             }
         },
-        log: {
-            info() {},
-            error() {},
-            verbose() {},
-            notice() {}
-        },
+        log: silentLogger,
         plugins
     });
 
     return { runtime, plugins, options: runtime.createServerOptions() };
 };
 
-const callHandler = (handler, ...args) =>
-    new Promise(resolve => {
-        handler(...args, (err, result) => resolve({ err, result }));
+interface CallbackResult {
+    err: SmtpError | null | undefined;
+    result: unknown;
+}
+
+const callHandler = (invoke: (callback: (err?: SmtpError | null, result?: unknown) => void) => void): Promise<CallbackResult> =>
+    new Promise((resolve) => {
+        invoke((err, result) => resolve({ err, result }));
     });
 
 describe('KirinServer SMTP hooks', () => {
+    it('retries failed starts, coalesces concurrent starts, and restarts after close', async () => {
+        const plugins = new FakePlugins();
+        const servers: FakeSmtpServer[] = [];
+        const createSmtpServer: SmtpServerFactory = () => {
+            const server = new FakeSmtpServer(servers.length === 0 ? new Error('address unavailable') : undefined);
+            servers.push(server);
+            return server;
+        };
+        const runtime = new KirinServer({
+            config: { smtp: { host: '127.0.0.1', port: 2525 } },
+            log: silentLogger,
+            plugins,
+            createSmtpServer
+        });
+
+        await assert.rejects(runtime.start(), /address unavailable/);
+
+        const [first, duplicate] = await Promise.all([runtime.start(), runtime.start()]);
+        assert(first);
+        assert.strictEqual(duplicate, first);
+        assert.equal(servers.length, 2);
+
+        await runtime.close();
+        assert.equal((first as FakeSmtpServer).listening, false);
+
+        const restarted = await runtime.start();
+        assert(restarted);
+        assert.notStrictEqual(restarted, first);
+        assert.equal(servers.length, 3);
+        await runtime.close();
+    });
+
     it('passes the original session to smtp:connect and keeps internal state private', async () => {
         const { runtime, plugins, options } = createRuntime();
         const session = createSession();
 
-        const { err } = await callHandler(options.onConnect, session);
+        const { err } = await callHandler((callback) => options.onConnect(session, callback));
 
         assert.ifError(err);
         assert.equal(session.interface, 'kirin-test');
@@ -104,7 +185,7 @@ describe('KirinServer SMTP hooks', () => {
     it('rejects AUTH when enabled without an auth hook', async () => {
         const { options } = createRuntime({ smtp: { authentication: true } });
         const auth = { method: 'PLAIN', username: 'user@example', password: 'secret' };
-        const { err, result } = await callHandler(options.onAuth, auth, createSession());
+        const { err, result } = await callHandler((callback) => options.onAuth(auth, createSession(), callback));
 
         assert(err);
         assert.equal(err.responseCode, 535);
@@ -113,14 +194,14 @@ describe('KirinServer SMTP hooks', () => {
 
     it('passes auth and session in ZoneMTA order and returns the accepted username', async () => {
         const plugins = new FakePlugins();
-        plugins.on('smtp:auth', auth => {
+        plugins.on<[{ username: string }]>('smtp:auth', (auth) => {
             auth.username = 'canonical@example';
         });
         const { options } = createRuntime({ smtp: { authentication: true }, plugins });
         const session = createSession();
         const auth = { method: 'PLAIN', username: 'user@example', password: 'secret' };
 
-        const { err, result } = await callHandler(options.onAuth, auth, session);
+        const { err, result } = await callHandler((callback) => options.onAuth(auth, session, callback));
 
         assert.ifError(err);
         assert.deepEqual(result, { user: 'canonical@example' });
@@ -130,14 +211,14 @@ describe('KirinServer SMTP hooks', () => {
     it('preserves auth hook errors', async () => {
         const plugins = new FakePlugins();
         plugins.on('smtp:auth', () => {
-            const error = new Error('Temporarily unavailable');
+            const error = new Error('Temporarily unavailable') as SmtpError;
             error.responseCode = 454;
             throw error;
         });
         const { options } = createRuntime({ smtp: { authentication: true }, plugins });
         const auth = { method: 'LOGIN', username: 'user@example', password: 'secret' };
 
-        const { err } = await callHandler(options.onAuth, auth, createSession());
+        const { err } = await callHandler((callback) => options.onAuth(auth, createSession(), callback));
 
         assert(err);
         assert.equal(err.responseCode, 454);
@@ -150,12 +231,14 @@ describe('KirinServer SMTP hooks', () => {
         const address = { address: 'sender@example.com', args: { SIZE: '123' } };
         const connection = runtime.getConnection(session);
 
-        const { err } = await callHandler(options.onMailFrom, address, session);
+        const { err } = await callHandler((callback) => options.onMailFrom(address, session, callback));
 
         assert.ifError(err);
         assert.equal(typeof address.address, 'string');
         assert.deepEqual(plugins.calls[0], { name: 'smtp:mail_from', args: [address, session] });
+        assert(connection.transaction);
         assert.equal(session.envelopeId, connection.transaction.uuid);
+        assert(connection.transaction.mail_from);
         assert.equal(connection.transaction.mail_from.address(), address.address);
     });
 
@@ -166,7 +249,7 @@ describe('KirinServer SMTP hooks', () => {
         const recipient = { address: 'recipient@example.com', args: { NOTIFY: 'FAILURE' }, dsn: { notify: ['FAILURE'] } };
         const session = createSession({ envelope: { mailFrom: sender, rcptTo: [] } });
 
-        const { err } = await callHandler(options.onRcptTo, recipient, session);
+        const { err } = await callHandler((callback) => options.onRcptTo(recipient, session, callback));
 
         assert.ifError(err);
         assert.equal(typeof recipient.address, 'string');
@@ -176,13 +259,18 @@ describe('KirinServer SMTP hooks', () => {
     it('builds and retains a ZoneMTA-compatible DATA envelope', async () => {
         const plugins = new FakePlugins();
         const { runtime, options } = createRuntime({ plugins });
-        let bufferedMessage;
-        plugins.on('smtp:data', (envelope, hookSession) => {
+        let bufferedMessage: Buffer | undefined;
+        plugins.on<[Envelope, SmtpSession]>('smtp:data', (envelope, hookSession) => {
             envelope.route = 'local';
-            bufferedMessage = runtime.getConnection(hookSession).transaction.getMessageBuffer();
+            const hookTransaction = runtime.getConnection(hookSession).transaction;
+            assert(hookTransaction);
+            bufferedMessage = hookTransaction.getMessageBuffer();
         });
         const sender = { address: 'Sender@TÄST.example', args: {} };
-        const recipients = [{ address: 'One@EXAMPLE.COM', args: {} }, { address: 'üser@TÄST.example', args: {} }];
+        const recipients = [
+            { address: 'One@EXAMPLE.COM', args: {} },
+            { address: 'üser@TÄST.example', args: {} }
+        ];
         const session = createSession({
             secure: true,
             tlsOptions: { name: 'TLS_AES_256_GCM_SHA384', version: 'TLSv1.3' },
@@ -193,21 +281,23 @@ describe('KirinServer SMTP hooks', () => {
         const connection = runtime.getConnection(session);
         const transaction = connection.resetTransaction();
         session.envelopeId = transaction.uuid;
-        const stream = new PassThrough();
+        const stream = new PassThrough() as PassThrough & SmtpDataStream;
         stream.sizeExceeded = false;
         const message = Buffer.from('From: sender@example.com\r\nTo: one@example.com\r\n\r\nHello');
 
-        const resultPromise = callHandler(options.onData, stream, session);
+        const resultPromise = callHandler((callback) => options.onData(stream, session, callback));
         stream.end(message);
         const { err, result } = await resultPromise;
 
         assert.ifError(err);
         assert.equal(result, 'Message accepted');
         assert.equal(plugins.calls.length, 1);
-        assert.equal(plugins.calls[0].name, 'smtp:data');
-        assert.strictEqual(plugins.calls[0].args[1], session);
+        const dataCall = plugins.calls[0];
+        assert(dataCall);
+        assert.equal(dataCall.name, 'smtp:data');
+        assert.strictEqual(dataCall.args[1], session);
 
-        const envelope = plugins.calls[0].args[0];
+        const envelope = dataCall.args[0] as Envelope;
         assert.deepEqual(envelope, {
             sessionId: 'session-id',
             id: transaction.uuid,
@@ -225,20 +315,21 @@ describe('KirinServer SMTP hooks', () => {
             route: 'local'
         });
         assert.equal(typeof envelope.time, 'number');
-        assert.strictEqual(connection.transaction.envelope, envelope);
-        assert.equal(connection.transaction.messageSize, message.length);
+        assert.strictEqual(transaction.envelope, envelope);
+        assert.equal(transaction.messageSize, message.length);
+        assert(bufferedMessage);
         assert.match(bufferedMessage.toString(), /^Received: /);
         assert.match(bufferedMessage.toString(), /\r\n\r\nHello$/);
-        assert.equal(connection.transaction.sourceBuffer.length, 0);
-        assert.equal(connection.transaction.bodyBuffer.length, 0);
+        assert.equal(transaction.sourceBuffer.length, 0);
+        assert.equal(transaction.bodyBuffer.length, 0);
     });
 
     it('rejects DATA marked oversized by smtp-server after draining the source stream', async () => {
         const { plugins, options } = createRuntime({ smtp: { size: 16 } });
         const session = createSession();
-        const stream = new PassThrough();
+        const stream = new PassThrough() as PassThrough & SmtpDataStream;
         stream.sizeExceeded = true;
-        const resultPromise = callHandler(options.onData, stream, session);
+        const resultPromise = callHandler((callback) => options.onData(stream, session, callback));
 
         stream.end(Buffer.alloc(64));
         const { err } = await resultPromise;
@@ -251,11 +342,11 @@ describe('KirinServer SMTP hooks', () => {
 
     it('releases buffered RAM when smtp:data exceeds its timeout', async () => {
         const plugins = new FakePlugins();
-        plugins.on('smtp:data', () => new Promise(() => {}));
+        plugins.on('smtp:data', () => new Promise<never>(() => {}));
         const { runtime, options } = createRuntime({ plugins, smtp: { dataHookTimeout: 10 } });
         const session = createSession();
-        const stream = new PassThrough();
-        const resultPromise = callHandler(options.onData, stream, session);
+        const stream = new PassThrough() as PassThrough & SmtpDataStream;
+        const resultPromise = callHandler((callback) => options.onData(stream, session, callback));
 
         stream.end('Subject: timeout\r\n\r\nBody');
         const { err } = await resultPromise;
@@ -263,7 +354,9 @@ describe('KirinServer SMTP hooks', () => {
         assert(err);
         assert.equal(err.responseCode, 451);
         assert.match(err.message, /timed out/);
-        assert.equal(runtime.getConnection(session).transaction.sourceBuffer.length, 0);
+        const transaction = runtime.getConnection(session).transaction;
+        assert(transaction);
+        assert.equal(transaction.sourceBuffer.length, 0);
     });
 
     it('does not emit a nonstandard smtp:close hook', () => {

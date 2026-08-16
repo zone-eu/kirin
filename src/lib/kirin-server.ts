@@ -1,212 +1,133 @@
-// @ts-check
-'use strict';
-
-/**
- * @typedef {import('@zone-eu/types').SmtpAddress} SmtpAddress
- * @typedef {import('@zone-eu/types').SmtpAuth} SmtpAuth
- * @typedef {Omit<import('@zone-eu/types').SmtpResponseError, 'code'> & { code?: string | number }} SmtpError
- * @typedef {import('@zone-eu/types').SmtpSession & {
- *   secure?: boolean,
- *   localAddress?: string,
- *   localPort?: number,
- *   openingCommand?: string
- * }} SmtpSession
- * @typedef {import('stream').Readable & { sizeExceeded?: boolean }} SmtpDataStream
- * @typedef {(err?: SmtpError | null) => void} SmtpCallback
- * @typedef {(err?: SmtpError | null, result?: { user: string }) => void} SmtpAuthCallback
- * @typedef {(err?: SmtpError | null, message?: string) => void} SmtpDataCallback
- * @typedef {{ keyPath?: string, certPath?: string, caPath?: string }} TlsConfig
- * @typedef {Object} SmtpConfig
- * @property {boolean} [enabled]
- * @property {string} [host]
- * @property {string | number} [port]
- * @property {string} [name]
- * @property {string} [banner]
- * @property {string | number} [size]
- * @property {string | number} [dataHookTimeout]
- * @property {boolean} [secure]
- * @property {boolean} [secured]
- * @property {boolean} [needsUpgrade]
- * @property {boolean} [disableSTARTTLS]
- * @property {boolean} [authentication]
- * @property {boolean} [authOptional]
- * @property {string | number} [closeTimeout]
- * @property {string | number} [maxClients]
- * @property {boolean} [useProxy]
- * @property {boolean} [useXClient]
- * @property {boolean} [useXForward]
- * @property {string | string[]} [disabledCommands]
- * @property {TlsConfig} [tls]
- * @typedef {{ ident?: string, smtp: SmtpConfig }} KirinConfig
- * @typedef {{
- *   info: (...args: unknown[]) => void,
- *   error: (...args: unknown[]) => void,
- *   verbose: (...args: unknown[]) => void,
- *   notice?: (...args: unknown[]) => void,
- *   [level: string]: ((...args: unknown[]) => void) | undefined
- * }} LoggerLike
- * @typedef {{
- *   hooks: Map<string, unknown[]>,
- *   runHooks: (name: string, args: unknown[]) => Promise<void>
- * }} PluginHandlerLike
- * @typedef {Object} SmtpServerOptions
- * @property {boolean} secure
- * @property {boolean} secured
- * @property {boolean} needsUpgrade
- * @property {unknown} logger
- * @property {string | false} name
- * @property {string} banner
- * @property {number} size
- * @property {boolean} authOptional
- * @property {boolean} useProxy
- * @property {boolean} useXClient
- * @property {boolean} useXForward
- * @property {number | undefined} closeTimeout
- * @property {number | undefined} maxClients
- * @property {Buffer | undefined} key
- * @property {Buffer | undefined} cert
- * @property {Buffer | undefined} ca
- * @property {string[]} disabledCommands
- * @property {(session: SmtpSession, callback: SmtpCallback) => void} onConnect
- * @property {(socket: unknown, session: SmtpSession, callback: SmtpCallback) => void} onSecure
- * @property {(auth: SmtpAuth, session: SmtpSession, callback: SmtpAuthCallback) => void} onAuth
- * @property {(address: SmtpAddress, session: SmtpSession, callback: SmtpCallback) => void} onMailFrom
- * @property {(address: SmtpAddress, session: SmtpSession, callback: SmtpCallback) => void} onRcptTo
- * @property {(stream: SmtpDataStream, session: SmtpSession, callback: SmtpDataCallback) => void} onData
- * @property {(session: SmtpSession) => void} onClose
- * @typedef {{
- *   on: (event: 'error', listener: (err: Error) => void) => SmtpServerInstance,
- *   once: (event: 'error', listener: (err: Error) => void) => SmtpServerInstance,
- *   removeListener: (event: 'error', listener: (err: Error) => void) => SmtpServerInstance,
- *   listen: (port: number, host: string | undefined, callback: () => void) => unknown,
- *   close: (callback: () => void) => void
- * }} SmtpServerInstance
- * @typedef {new (options: SmtpServerOptions) => SmtpServerInstance} SmtpServerConstructor
- */
-
-const fs = require('fs');
-const os = require('os');
-const { SMTPServer } = /** @type {{ SMTPServer: SmtpServerConstructor }} */ (require('smtp-server'));
-const { createSmtpLogger, formatLogSource, getErrorSessionId } = require('./logger');
-const { KirinConnection } = require('./connection');
-const { buildEnvelope } = require('./smtp-envelope');
-const { SmtpHooks } = require('./smtp-hooks');
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import { SMTPServer } from 'smtp-server';
+import { KirinConnection } from './connection.js';
+import { createSmtpLogger, formatLogSource, getErrorSessionId } from './logger.js';
+import { buildEnvelope } from './smtp-envelope.js';
+import { SmtpHooks } from './smtp-hooks.js';
+import type {
+    KirinConfig,
+    LoggerLike,
+    PluginHandlerLike,
+    SmtpDataCallback,
+    SmtpError,
+    SmtpServerInstance,
+    SmtpServerOptions,
+    SmtpSession
+} from '../types.js';
 
 const DEFAULT_MESSAGE_SIZE = 50 * 1024 * 1024;
 const DEFAULT_DATA_HOOK_TIMEOUT = 30 * 1000;
 
-/**
- * @param {unknown} value
- * @param {number} fallback
- * @returns {number}
- */
-const positiveInteger = (value, fallback) => {
+const describeUnknown = (value: unknown): string => {
+    if (typeof value === 'string') {
+        return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint' || typeof value === 'symbol') {
+        return String(value);
+    }
+    if (value === null || value === undefined) {
+        return String(value);
+    }
+    try {
+        return JSON.stringify(value) || Object.prototype.toString.call(value);
+    } catch {
+        return Object.prototype.toString.call(value);
+    }
+};
+
+const positiveInteger = (value: unknown, fallback: number): number => {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 };
 
-/**
- * @template T
- * @param {PromiseLike<T>} promise
- * @param {number} timeoutMs
- * @returns {Promise<T>}
- */
-const runWithTimeout = (promise, timeoutMs) =>
+const runWithTimeout = <T>(promise: PromiseLike<T>, timeoutMs: number): Promise<T> =>
     new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
-            /** @type {SmtpError} */
-            const error = new Error(`smtp:data hook timed out after ${timeoutMs} ms`);
+            const error = new Error(`smtp:data hook timed out after ${timeoutMs} ms`) as SmtpError;
             error.responseCode = 451;
             reject(error);
         }, timeoutMs);
-        timer.unref?.();
+        timer.unref();
 
         promise.then(
-            result => {
+            (result) => {
                 clearTimeout(timer);
                 resolve(result);
             },
-            err => {
+            (err) => {
                 clearTimeout(timer);
-                reject(err);
+                reject(normalizeError(err));
             }
         );
     });
 
-/**
- * Normalizes plugin and stream failures into an SMTP response error.
- *
- * @param {unknown} err
- * @param {number} [fallbackCode]
- * @returns {SmtpError}
- */
-const normalizeError = (err, fallbackCode) => {
+/** Normalizes plugin and stream failures into an SMTP response error. */
+const normalizeError = (err: unknown, fallbackCode = 451): SmtpError => {
     if (!err) {
-        /** @type {SmtpError} */
-        const error = new Error('Temporary failure');
-        error.responseCode = fallbackCode || 451;
+        const error = new Error('Temporary failure') as SmtpError;
+        error.responseCode = fallbackCode;
         return error;
     }
 
     if (err instanceof Error) {
-        const smtpError = /** @type {SmtpError} */ (err);
+        const smtpError = err as SmtpError;
         if (!smtpError.responseCode && typeof smtpError.code === 'number') {
             smtpError.responseCode = smtpError.code;
         }
         if (!smtpError.responseCode) {
-            smtpError.responseCode = fallbackCode || 451;
+            smtpError.responseCode = fallbackCode;
         }
         return smtpError;
     }
 
-    const legacyError = /** @type {{ reply?: unknown, code?: unknown }} */ (err);
-    if (typeof err === 'object' && legacyError.reply) {
-        /** @type {SmtpError} */
-        const error = new Error(String(legacyError.reply));
-        error.responseCode = (typeof legacyError.code === 'number' && legacyError.code) || fallbackCode || 451;
-        return error;
+    if (typeof err === 'object') {
+        const legacyError = err as { reply?: unknown; code?: unknown };
+        if (legacyError.reply) {
+            const error = new Error(describeUnknown(legacyError.reply)) as SmtpError;
+            error.responseCode = (typeof legacyError.code === 'number' && legacyError.code) || fallbackCode;
+            return error;
+        }
     }
 
-    /** @type {SmtpError} */
-    const error = new Error(String(err));
-    error.responseCode = fallbackCode || 451;
+    const error = new Error(describeUnknown(err)) as SmtpError;
+    error.responseCode = fallbackCode;
     return error;
 };
 
-/**
- * @param {string | false | null | undefined} filePath
- * @returns {Buffer | undefined}
- */
-const readTlsFile = filePath => {
-    if (!filePath) {
-        return undefined;
-    }
+const readTlsFile = (filePath: string | false | null | undefined): Buffer | undefined => (filePath ? readFileSync(filePath) : undefined);
 
-    return fs.readFileSync(filePath);
-};
+export type SmtpServerFactory = (options: SmtpServerOptions) => SmtpServerInstance;
 
-class KirinServer {
-    /**
-     * @param {{ config: KirinConfig, log: LoggerLike, plugins: PluginHandlerLike }} options
-     */
-    constructor({ config, log, plugins }) {
+export interface KirinServerOptions {
+    config: KirinConfig;
+    log: LoggerLike;
+    plugins: PluginHandlerLike;
+    /** Overrides smtp-server construction, primarily for embedders and tests. */
+    createSmtpServer?: SmtpServerFactory;
+}
+
+export class KirinServer {
+    readonly config: KirinConfig;
+    readonly log: LoggerLike;
+    readonly plugins: PluginHandlerLike;
+    readonly smtpHooks: SmtpHooks;
+    private readonly createSmtpServer: SmtpServerFactory;
+    private readonly connections = new WeakMap<SmtpSession, KirinConnection>();
+    private readonly activeMessages = new WeakMap<SmtpSession, () => void>();
+    private server: SmtpServerInstance | false = false;
+    private starting: Promise<SmtpServerInstance> | false = false;
+    private closing: Promise<void> | false = false;
+
+    constructor({ config, log, plugins, createSmtpServer = (options) => new SMTPServer(options) }: KirinServerOptions) {
         this.config = config;
         this.log = log;
         this.plugins = plugins;
         this.smtpHooks = new SmtpHooks(plugins);
-        /** @type {WeakMap<SmtpSession, InstanceType<typeof KirinConnection>>} */
-        this.connections = new WeakMap();
-        /** @type {WeakMap<SmtpSession, () => void>} */
-        this.activeMessages = new WeakMap();
-        /** @type {SmtpServerInstance | false} */
-        this.server = false;
+        this.createSmtpServer = createSmtpServer;
     }
 
-    /**
-     * @param {SmtpSession} session
-     * @returns {InstanceType<typeof KirinConnection>}
-     */
-    getConnection(session) {
+    getConnection(session: SmtpSession): KirinConnection {
         let connection = this.connections.get(session);
 
         if (!connection) {
@@ -219,11 +140,7 @@ class KirinServer {
         return connection;
     }
 
-    /**
-     * @param {InstanceType<typeof KirinConnection>} connection
-     * @returns {string}
-     */
-    buildReceivedHeader(connection) {
+    buildReceivedHeader(connection: KirinConnection): string {
         const remoteName = connection.session.hostNameAppearsAs || connection.session.clientHostname || `[${connection.remote.ip}]`;
         const peer = connection.session.clientHostname || `[${connection.remote.ip}]`;
         const byHost = this.config.smtp.name || os.hostname();
@@ -233,8 +150,7 @@ class KirinServer {
             .replace('GMT', '+0000')}`;
     }
 
-    /** @returns {SmtpServerOptions} */
-    createServerOptions() {
+    createServerOptions(): SmtpServerOptions {
         const smtp = this.config.smtp || {};
         const tls = smtp.tls || {};
         const authentication = smtp.authentication === true;
@@ -258,7 +174,7 @@ class KirinServer {
             key: readTlsFile(tls.keyPath),
             cert: readTlsFile(tls.certPath),
             ca: readTlsFile(tls.caPath),
-            disabledCommands: /** @type {string[]} */ ([])
+            disabledCommands: ([] as string[])
                 .concat(smtp.disabledCommands || [])
                 .concat(authentication ? [] : ['AUTH'])
                 .concat(smtp.disableSTARTTLS ? ['STARTTLS'] : []),
@@ -268,7 +184,7 @@ class KirinServer {
                 this.smtpHooks
                     .connect(session)
                     .then(() => callback())
-                    .catch(err => callback(normalizeError(err, 554)));
+                    .catch((err) => callback(normalizeError(err, 554)));
             },
             onSecure: (_socket, session, callback) => {
                 this.getConnection(session);
@@ -278,23 +194,23 @@ class KirinServer {
                 this.getConnection(session);
 
                 if (!authentication || !this.smtpHooks.has('smtp:auth')) {
-                    /** @type {SmtpError} */
-                    const error = new Error('Authentication not available');
+                    const error = new Error('Authentication not available') as SmtpError;
                     error.responseCode = 535;
-                    return callback(error);
+                    callback(error);
+                    return;
                 }
 
                 if (!auth.username) {
-                    /** @type {SmtpError} */
-                    const error = new Error('Invalid username or password');
+                    const error = new Error('Invalid username or password') as SmtpError;
                     error.responseCode = 535;
-                    return callback(error);
+                    callback(error);
+                    return;
                 }
 
                 this.smtpHooks
                     .auth(auth, session)
                     .then(() => callback(null, { user: auth.username }))
-                    .catch(err => callback(normalizeError(err, 535)));
+                    .catch((err) => callback(normalizeError(err, 535)));
             },
             onMailFrom: (address, session, callback) => {
                 const connection = this.getConnection(session);
@@ -306,7 +222,7 @@ class KirinServer {
                 this.smtpHooks
                     .mailFrom(address, session)
                     .then(() => callback())
-                    .catch(err => callback(normalizeError(err, 550)));
+                    .catch((err) => callback(normalizeError(err, 550)));
             },
             onRcptTo: (address, session, callback) => {
                 const connection = this.getConnection(session);
@@ -316,19 +232,17 @@ class KirinServer {
                 this.smtpHooks
                     .rcptTo(address, session)
                     .then(() => callback())
-                    .catch(err => callback(normalizeError(err, 550)));
+                    .catch((err) => callback(normalizeError(err, 550)));
             },
             onData: (stream, session, callback) => {
                 const connection = this.getConnection(session);
                 const transaction = connection.transaction || connection.resetTransaction();
                 transaction.syncEnvelope(session);
-                /** @type {Buffer[]} */
-                const chunks = [];
+                const chunks: Buffer[] = [];
 
                 let returned = false;
                 let streamEnded = false;
-                /** @type {SmtpDataCallback} */
-                const done = (...args) => {
+                const done: SmtpDataCallback = (...args) => {
                     if (returned) {
                         return;
                     }
@@ -336,14 +250,14 @@ class KirinServer {
                     callback(...args);
                 };
 
-                const disposeMessage = () => {
+                const disposeMessage = (): void => {
                     this.activeMessages.delete(session);
                     transaction.clearMessage();
                     chunks.length = 0;
                 };
                 this.activeMessages.set(session, disposeMessage);
 
-                stream.on('data', chunk => {
+                stream.on('data', (chunk: Buffer | string | Uint8Array) => {
                     if (stream.sizeExceeded) {
                         chunks.length = 0;
                         return;
@@ -351,7 +265,7 @@ class KirinServer {
                     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
                 });
 
-                stream.once('error', err => {
+                stream.once('error', (err) => {
                     disposeMessage();
                     done(normalizeError(err, 451));
                 });
@@ -367,11 +281,11 @@ class KirinServer {
                     streamEnded = true;
 
                     if (stream.sizeExceeded) {
-                        /** @type {SmtpError} */
-                        const error = new Error(`Message exceeds fixed maximum message size ${messageSize} B`);
+                        const error = new Error(`Message exceeds fixed maximum message size ${messageSize} B`) as SmtpError;
                         error.responseCode = 552;
                         disposeMessage();
-                        return done(error);
+                        done(error);
+                        return;
                     }
 
                     try {
@@ -381,18 +295,19 @@ class KirinServer {
                         connection.prepareMessage(message);
                     } catch (err) {
                         disposeMessage();
-                        return done(normalizeError(err, 452));
+                        done(normalizeError(err, 452));
+                        return;
                     }
 
-                    /** @type {Promise<void>} */
-                    let hookPromise;
+                    let hookPromise: Promise<void>;
                     try {
                         const envelope = buildEnvelope(transaction, session, session.interface || this.config.ident || 'kirin');
                         transaction.envelope = envelope;
                         hookPromise = this.smtpHooks.data(envelope, session);
                     } catch (err) {
                         disposeMessage();
-                        return done(normalizeError(err, 451));
+                        done(normalizeError(err, 451));
+                        return;
                     }
 
                     runWithTimeout(hookPromise, hookTimeout).then(
@@ -401,22 +316,25 @@ class KirinServer {
                             disposeMessage();
                             done(null, responseMessage);
                         },
-                        err => {
+                        (err) => {
                             disposeMessage();
                             done(normalizeError(err, 451));
                         }
                     );
                 });
             },
-            onClose: session => {
+            onClose: (session) => {
                 this.activeMessages.get(session)?.();
                 this.connections.delete(session);
             }
         };
     }
 
-    /** @returns {Promise<SmtpServerInstance | false>} */
-    async start() {
+    async start(): Promise<SmtpServerInstance | false> {
+        if (this.closing) {
+            await this.closing;
+        }
+
         if (this.server) {
             return this.server;
         }
@@ -425,38 +343,76 @@ class KirinServer {
             return false;
         }
 
-        const server = new SMTPServer(this.createServerOptions());
-        this.server = server;
-        server.on('error', err => {
+        const operation = this.starting || this.openServer();
+        this.starting = operation;
+
+        try {
+            return await operation;
+        } finally {
+            if (this.starting === operation) {
+                this.starting = false;
+            }
+        }
+    }
+
+    private async openServer(): Promise<SmtpServerInstance> {
+        const server = this.createSmtpServer(this.createServerOptions());
+        server.on('error', (err: Error) => {
             this.log.error(formatLogSource('SMTP', getErrorSessionId(err)), 'Server error: %s', err.stack || err.message || err);
         });
 
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
             const host = this.config.smtp.host || undefined;
             const port = Number.isFinite(Number(this.config.smtp.port)) ? Number(this.config.smtp.port) : 2525;
 
-            function onListening() {
+            const onListening = (): void => {
                 server.removeListener('error', onError);
-                resolve(undefined);
-            }
+                resolve();
+            };
 
-            /** @param {Error} err */
-            function onError(err) {
+            const onError = (err: Error): void => {
                 reject(err);
-            }
+            };
 
             server.once('error', onError);
             server.listen(port, host, onListening);
         });
 
-        return this.server;
+        this.server = server;
+        return server;
     }
 
-    /** @returns {Promise<void>} */
-    async close() {
-        if (!this.server) {
+    async close(): Promise<void> {
+        if (this.closing) {
+            return this.closing;
+        }
+
+        const operation = this.closeServer();
+        this.closing = operation;
+
+        try {
+            await operation;
+        } finally {
+            if (this.closing === operation) {
+                this.closing = false;
+            }
+        }
+    }
+
+    private async closeServer(): Promise<void> {
+        if (this.starting) {
+            try {
+                await this.starting;
+            } catch {
+                return;
+            }
+        }
+
+        const server = this.server;
+        if (!server) {
             return;
         }
+        this.server = false;
 
         try {
             await this.plugins.runHooks('shutdown', []);
@@ -464,9 +420,6 @@ class KirinServer {
             this.log.error('App', 'Shutdown hook failed: %s', err instanceof Error ? err.stack || err.message : err);
         }
 
-        const server = this.server;
-        await new Promise(resolve => server.close(() => resolve(undefined)));
+        await new Promise<void>((resolve) => server.close(() => resolve()));
     }
 }
-
-module.exports = { KirinServer };
