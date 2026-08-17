@@ -6,7 +6,6 @@ node_modules
 coverage
 .nyc_output
 test
-types
 *.log
 *.pid
 *.rdb

@@ -1,24 +1,39 @@
-// @ts-check
-'use strict';
+import punycode from 'punycode.js';
+import type { Envelope, SmtpAddress, SmtpSession } from '../types.js';
 
-const punycode = require('punycode.js');
+const replaceInvalidAddressCharacters = (value: string): string => {
+    let result = '';
+    let replacing = false;
+
+    for (const character of value) {
+        const codePoint = character.codePointAt(0) ?? 0;
+        const invalid = codePoint <= 31 || character === '<' || character === '>';
+        if (invalid) {
+            if (!replacing) {
+                result += ' ';
+                replacing = true;
+            }
+        } else {
+            result += character;
+            replacing = false;
+        }
+    }
+
+    return result;
+};
 
 /**
  * Normalizes an SMTP envelope address using the same rules as ZoneMTA.
  *
- * @param {import('@zone-eu/types').SmtpAddress | string | false | null | undefined} address
- * @returns {string}
+ * @param address SMTP address to normalize.
  */
-const normalizeAddress = address => {
+export const normalizeAddress = (address: SmtpAddress | string | false | null | undefined): string => {
     const input = typeof address === 'string' ? address : address && typeof address === 'object' ? address.address : undefined;
     if (!input) {
         return '';
     }
 
-    let normalized = input
-        .toString()
-        .replace(/[\x00-\x1F<>]+/g, ' ')
-        .trim();
+    let normalized = replaceInvalidAddressCharacters(input.toString()).trim();
     const atPos = normalized.lastIndexOf('@');
 
     if (atPos < 0) {
@@ -49,26 +64,27 @@ const normalizeAddress = address => {
 };
 
 /**
- * @param {{ uuid: string }} transaction
- * @param {import('@zone-eu/types').SmtpSession} session
- * @param {string} interfaceName
- * @returns {import('@zone-eu/types').Envelope}
+ * @param transaction Transaction supplying the envelope id.
+ * @param session Active SMTP session.
+ * @param interfaceName Receiver interface name.
  */
-const buildEnvelope = (transaction, session, interfaceName) => {
-    /** @type {import('@zone-eu/types').Envelope} */
-    const envelope = {
+export const buildEnvelope = (transaction: { uuid: string }, session: SmtpSession, interfaceName: string): Envelope => {
+    const envelope: Envelope = {
         sessionId: session.id,
         id: transaction.uuid,
         interface: interfaceName,
         from: normalizeAddress(session.envelope.mailFrom),
-        to: (session.envelope.rcptTo || []).map(address => normalizeAddress(address)),
+        to: (session.envelope.rcptTo || []).map((address) => normalizeAddress(address)),
         origin: session.remoteAddress,
         originhost: session.clientHostname || false,
         transhost: session.hostNameAppearsAs || false,
-        transtype: session.transmissionType,
         user: session.user || false,
         time: Date.now()
     };
+
+    if (session.transmissionType !== undefined) {
+        envelope.transtype = session.transmissionType;
+    }
 
     if (session.sendingZone) {
         envelope.sendingZone = session.sendingZone;
@@ -80,5 +96,3 @@ const buildEnvelope = (transaction, session, interfaceName) => {
 
     return envelope;
 };
-
-module.exports = { buildEnvelope, normalizeAddress };
