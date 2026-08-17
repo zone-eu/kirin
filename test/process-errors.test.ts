@@ -37,6 +37,7 @@ describe('process error handling', () => {
 
     it('keeps a compiled ESM process alive after both failure types', async () => {
         const handlerUrl = pathToFileURL(resolve('dist/esm/lib/process-errors.js')).href;
+        // Script to check process
         const script = `
             import { writeSync } from 'node:fs';
             import { installProcessErrorHandlers } from ${JSON.stringify(handlerUrl)};
