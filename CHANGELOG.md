@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/zone-eu/kirin/compare/v0.1.1...v0.1.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* fix process-errors test ([#5](https://github.com/zone-eu/kirin/issues/5)) ([4369eb0](https://github.com/zone-eu/kirin/commit/4369eb0909a9059013d0ed21d90b9025e0f04a4d))
+
 ## [0.1.1](https://github.com/zone-eu/kirin/compare/v0.1.0...v0.1.1) (2026-08-17)
 
 
