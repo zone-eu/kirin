@@ -41,10 +41,22 @@ describe('process error handling', () => {
             import { writeSync } from 'node:fs';
             import { installProcessErrorHandlers } from ${JSON.stringify(handlerUrl)};
             const failures = [];
+            const completionTimeout = setTimeout(() => process.exit(2), 1000);
             installProcessErrorHandlers({
                 log: {
-                    error(_component, label) {
-                        failures.push(label);
+                    error(_component, label, message) {
+                        failures.push({ label, message });
+                        const loggedRejection = failures.some(
+                            (failure) => failure.label.includes('Unhandled rejection') && failure.message.includes('rejected')
+                        );
+                        const loggedException = failures.some(
+                            (failure) => failure.label.includes('Uncaught exception') && failure.message.includes('thrown')
+                        );
+                        if (loggedRejection && loggedException) {
+                            clearTimeout(completionTimeout);
+                            writeSync(1, 'still alive');
+                            process.exit(0);
+                        }
                     }
                 }
             });
@@ -52,13 +64,6 @@ describe('process error handling', () => {
             setImmediate(() => {
                 throw new Error('thrown');
             });
-            setTimeout(() => {
-                if (failures.length !== 2) {
-                    process.exit(2);
-                }
-                writeSync(1, 'still alive');
-                process.exit(0);
-            }, 50);
         `;
 
         const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '--eval', script], { timeout: 2000 });
