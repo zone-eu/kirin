@@ -1,0 +1,47 @@
+ident = "kirin"
+user = ""
+group = ""
+
+[log]
+level = "info"
+
+[log.gelf]
+enabled = false
+component = "kirin"
+hostname = ""
+
+[log.gelf.options]
+graylogPort = 12201
+graylogHostname = "127.0.0.1"
+connection = "lan"
+
+[smtp]
+enabled = true
+host = "127.0.0.1"
+port = 2525
+name = "mx.example.test"
+banner = "Welcome to Kirin"
+size = 52428800
+dataHookTimeout = 30000
+secure = false
+secured = false
+needsUpgrade = false
+disableSTARTTLS = true
+authentication = false
+authOptional = true
+closeTimeout = 30000
+maxClients = 2000
+useProxy = false
+useXClient = false
+useXForward = false
+
+[smtp.tls]
+keyPath = ""
+certPath = ""
+caPath = ""
+
+[plugins]
+pluginsPath = "."
+
+[plugins.conf]
+# @include "plugins/*.toml"
