@@ -52,4 +52,5 @@ jobs:
             - name: Build image
               run: docker build -t kirin:test .
             - name: Smoke-test compiled entrypoint
-              run: docker run --rm kirin:test npm run show-config
+              timeout-minutes: 1
+              run: docker run --rm --env NODE_CONFIG_ONLY=true kirin:test
