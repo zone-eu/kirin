@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24-alpine AS build
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY types ./types
 
 RUN npm run build
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-alpine AS runtime
 
 WORKDIR /app
 
@@ -29,4 +29,4 @@ EXPOSE 2525
 
 USER node
 
-CMD ["node", "--enable-source-maps", "dist/esm/server.js"]
+ENTRYPOINT ["node", "--enable-source-maps", "dist/esm/server.js"]
