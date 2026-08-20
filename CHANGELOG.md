@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/zone-eu/kirin/compare/v0.1.1...v0.1.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* fix dockerfile ([#9](https://github.com/zone-eu/kirin/issues/9)) ([4fed3c9](https://github.com/zone-eu/kirin/commit/4fed3c9fc49631ebcaf551bfaaa9a4ba6e91a216))
+
 ## [0.1.1](https://github.com/zone-eu/kirin/compare/v0.1.0...v0.1.1) (2026-08-17)
 
 
