@@ -157,12 +157,63 @@ docker run --rm -p 2525:2525 kirin
 ```
 
 The image sets the in-container listener to `0.0.0.0`, publishing the port is
-still an explicit `docker run` choice. To use an external configuration file:
+still an explicit `docker run` choice.
+
+Pass `APPCONF_` environment variables with `-e` to override configuration.
+Replace dots in configuration paths with underscores and preserve the key's
+capitalization: `smtp.maxClients` becomes `APPCONF_smtp_maxClients`. For example,
+set the SMTP hostname, listener port, connection limit, and log level:
+
+```bash
+docker run --rm -p 2525:2500 \
+  -e APPCONF_smtp_name=mx.example.com \
+  -e APPCONF_smtp_port=2500 \
+  -e APPCONF_smtp_maxClients=100 \
+  -e APPCONF_log_level=debug \
+  kirin
+```
+
+The right-hand port in `-p` must match `smtp.port` inside the container. In this
+example, host port `2525` forwards to container port `2500`.
+
+For multiple settings, create a deployment-specific `kirin.env` file:
+
+```dotenv
+APPCONF_smtp_name=mx.example.com
+APPCONF_smtp_port=2525
+APPCONF_smtp_size=10485760
+APPCONF_smtp_maxClients=100
+APPCONF_smtp_disableSTARTTLS=true
+APPCONF_log_level=info
+```
+
+Load it with Docker's `--env-file` option:
+
+```bash
+docker run --rm --env-file ./kirin.env -p 2525:2525 kirin
+```
+
+Environment overrides only apply to keys already defined in the loaded
+configuration. Their existing types determine how numbers, booleans, and
+strings are parsed. Use `true` or `false` for boolean settings. Environment
+variables override configuration files, and command-line arguments override
+environment variables. Keep deployment files containing secrets outside the
+repository.
+
+To inspect the merged configuration without starting the listener:
+
+```bash
+docker run --rm --env-file ./kirin.env -e NODE_CONFIG_ONLY=true kirin
+```
+
+The output includes configuration values, so avoid sharing it if it contains
+secrets. To use an external configuration file, optionally combined with the
+environment overrides above:
 
 ```bash
 docker run --rm -p 2525:2525 \
   -v /etc/kirin.toml:/run/kirin.toml:ro \
-  kirin npm start -- --config=/run/kirin.toml
+  kirin --config=/run/kirin.toml
 ```
 
 ## TypeScript package
