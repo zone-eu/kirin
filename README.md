@@ -8,13 +8,13 @@ Clusterable/container-ready MX server built on `smtp-server`.
 
 Kirin is a small SMTP receiver built on
 [`smtp-server`](https://www.npmjs.com/package/smtp-server). It exposes
-ZoneMTA-compatible receiver hooks through `@zone-eu/wild-plugins` and can run
-directly with Node.js or in a container.
+plugin hooks for extending SMTP processing and can run directly with Node.js
+or in a container.
 
 ## Features
 
 - Single-process runtime designed for container orchestration
-- ZoneMTA-compatible SMTP hook contracts
+- Plugin hooks for SMTP processing
 - Configurable SMTP size, connection, authentication, proxy, and TLS settings
 - Graceful signal handling and plugin shutdown hooks
 - Docker image support
@@ -117,13 +117,21 @@ under `config/plugins/`, keep its secrets in deployment-specific configuration,
 and set the plugin's `enabled` value explicitly. Plugins run in ascending
 `ordering` value.
 
-The receiver exposes these hooks:
+Plugins are managed by `@zone-eu/wild-plugins`, with ZoneMTA-compatible
+receiver hook contracts. The receiver exposes these hooks:
 
 - `smtp:connect(session)`
 - `smtp:auth(auth, session)`
 - `smtp:mail_from(address, session)`
 - `smtp:rcpt_to(address, session)`
 - `smtp:data(envelope, session)`
+- `smtp:max_data_exceeded(session)`
+
+`smtp:max_data_exceeded` runs once after oversized DATA has been drained,
+instead of `smtp:data`. Buffered message data is released before the hook runs.
+The message is still rejected with `552` if the hook succeeds, fails, or exceeds
+`smtp.dataHookTimeout`. This hook does not cover oversized `SIZE` declarations
+in `MAIL FROM`, which `smtp-server` rejects before calling Kirin.
 
 The receiver-specific connection and transaction adapters remain internal. A
 plugin can obtain the matching connection through the plugin handler's

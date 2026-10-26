@@ -29,4 +29,8 @@ export class SmtpHooks {
     data(envelope: Envelope, session: SmtpSession): Promise<void> {
         return this.handler.runHooks('smtp:data', [envelope, session]);
     }
+
+    maxDataExceeded(session: SmtpSession): Promise<void> {
+        return this.handler.runHooks('smtp:max_data_exceeded', [session]);
+    }
 }
