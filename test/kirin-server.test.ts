@@ -325,9 +325,19 @@ describe('KirinServer SMTP hooks', () => {
     });
 
     it('rejects DATA marked oversized by smtp-server after draining the source stream', async () => {
-        const { plugins, options } = createRuntime({ smtp: { size: 16 } });
+        const { runtime, plugins, options } = createRuntime({ smtp: { size: 16 } });
         const session = createSession();
         const stream = new PassThrough() as PassThrough & SmtpDataStream;
+        let hookCompleted = false;
+        plugins.on('smtp:max_data_exceeded', async (hookSession: SmtpSession) => {
+            assert.strictEqual(hookSession, session);
+            assert.equal(stream.readableEnded, true);
+            const transaction = runtime.getConnection(session).transaction;
+            assert(transaction);
+            assert.equal(transaction.sourceBuffer.length, 0);
+            await Promise.resolve();
+            hookCompleted = true;
+        });
         stream.sizeExceeded = true;
         const resultPromise = callHandler((callback) => options.onData(stream, session, callback));
 
@@ -337,8 +347,33 @@ describe('KirinServer SMTP hooks', () => {
         assert(err);
         assert.equal(err.responseCode, 552);
         assert.equal(stream.readableEnded, true);
-        assert.equal(plugins.calls.length, 0);
+        assert.equal(hookCompleted, true);
+        assert.deepEqual(plugins.calls, [{ name: 'smtp:max_data_exceeded', args: [session] }]);
     });
+
+    for (const failure of ['rejection', 'timeout'] as const) {
+        it(`preserves the size rejection after smtp:max_data_exceeded ${failure}`, async () => {
+            const plugins = new FakePlugins();
+            plugins.on('smtp:max_data_exceeded', () => {
+                if (failure === 'rejection') {
+                    throw Object.assign(new Error('Plugin failure'), { responseCode: 451 });
+                }
+                return new Promise<never>(() => {});
+            });
+            const { options } = createRuntime({ plugins, smtp: { size: 16, dataHookTimeout: 10 } });
+            const stream = new PassThrough() as PassThrough & SmtpDataStream;
+            stream.sizeExceeded = true;
+            const resultPromise = callHandler((callback) => options.onData(stream, createSession(), callback));
+
+            stream.end(Buffer.alloc(64));
+            const { err } = await resultPromise;
+
+            assert(err);
+            assert.equal(err.responseCode, 552);
+            assert.match(err.message, /exceeds fixed maximum message size/);
+            assert.equal(plugins.calls.length, 1);
+        });
+    }
 
     it('releases buffered RAM when smtp:data exceeds its timeout', async () => {
         const plugins = new FakePlugins();

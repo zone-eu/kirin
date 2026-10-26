@@ -41,10 +41,10 @@ const positiveInteger = (value: unknown, fallback: number): number => {
     return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 };
 
-const runWithTimeout = <T>(promise: PromiseLike<T>, timeoutMs: number): Promise<T> =>
+const runWithTimeout = <T>(promise: PromiseLike<T>, timeoutMs: number, hookName = 'smtp:data'): Promise<T> =>
     new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
-            const error = new Error(`smtp:data hook timed out after ${timeoutMs} ms`) as SmtpError;
+            const error = new Error(`${hookName} hook timed out after ${timeoutMs} ms`) as SmtpError;
             error.responseCode = 451;
             reject(error);
         }, timeoutMs);
@@ -284,7 +284,13 @@ export class KirinServer {
                         const error = new Error(`Message exceeds fixed maximum message size ${messageSize} B`) as SmtpError;
                         error.responseCode = 552;
                         disposeMessage();
-                        done(error);
+                        runWithTimeout(this.smtpHooks.maxDataExceeded(session), hookTimeout, 'smtp:max_data_exceeded').then(
+                            () => done(error),
+                            (err) => {
+                                this.log.error('SMTP', 'smtp:max_data_exceeded hook failed: %s', normalizeError(err).message);
+                                done(error);
+                            }
+                        );
                         return;
                     }
 
