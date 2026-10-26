@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/zone-eu/kirin/compare/v0.1.3...v0.2.0) (2026-10-26)
+
+
+### Features
+
+* Add Max Data Exceeded hook, bump deps ([#13](https://github.com/zone-eu/kirin/issues/13)) ([34ac5d2](https://github.com/zone-eu/kirin/commit/34ac5d28b31eb6adfa86272f005750615200a341))
+
 ## [0.1.3](https://github.com/zone-eu/kirin/compare/v0.1.2...v0.1.3) (2026-08-21)
 
 
